@@ -9,7 +9,7 @@ import (
 )
 
 // opens a connection pool and checks the database answers.
-func connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+func Connect(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("create pool: %w", err)
