@@ -12,7 +12,7 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-func NewRouter(db Pinger) *gin.Engine {
+func NewRouter(db Pinger, drivers DriverRepo) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery(), gin.Logger())
 
@@ -31,6 +31,7 @@ func NewRouter(db Pinger) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 
 	})
+	(&driverHandler{repo: drivers}).register(r)
 	return r
 
 }
