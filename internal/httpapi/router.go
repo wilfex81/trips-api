@@ -28,7 +28,7 @@ func NewRouter(db Pinger) *gin.Engine {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "database Unavailable"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "reaady"})
+		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 
 	})
 	return r
