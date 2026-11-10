@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -8,11 +10,31 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestHealthz(t *testing.T) {
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	NewRouter().ServeHTTP(rec, req)
+type fakeDB struct{ err error }
 
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, `{"status":"ok"}`, rec.Body.String())
+func (f fakeDB) Ping(context.Context) error { return f.err }
+
+func TestProbes(t *testing.T) {
+	tests := []struct {
+		name   string
+		path   string
+		dbErr  error
+		status int
+		body   string
+	}{
+		{"liveness", "/healthz", nil, 200, `{"status":"ok"}`},
+		{"liveness ignores the database", "/healthz", errors.New("down"), 200, `{"status":"ok"}`},
+		{"ready", "/readyz", nil, 200, `{"status":"ready"}`},
+		{"not ready", "/readyz", errors.New("down"), 503, `{"status":"database unavailable"}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			NewRouter(fakeDB{tc.dbErr}).ServeHTTP(rec, req)
+
+			assert.Equal(t, tc.status, rec.Code)
+			assert.JSONEq(t, tc.body, rec.Body.String())
+		})
+	}
 }
