@@ -25,7 +25,7 @@ func NewRouter(db Pinger, drivers DriverRepo) *gin.Engine {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
 		if err := db.Ping(ctx); err != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "database Unavailable"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "database unavailable"})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
