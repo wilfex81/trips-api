@@ -10,11 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/wilfex81/trips-api/internal/config"
 	"github.com/wilfex81/trips-api/internal/httpapi"
 )
 
 func main() {
+	_ = godotenv.Load()
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)

@@ -16,7 +16,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("SHUTDOWN_TIMEOUT: %w", err)
 	}
-	return Config{Addr: getenv("ADDR", ":8080"), ShutdownTimeout: d}, nil
+	return Config{Addr: getenv("ADDR", ""), ShutdownTimeout: d}, nil
 }
 
 func getenv(key, fallback string) string {
