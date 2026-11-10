@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -8,6 +9,7 @@ import (
 
 type Config struct {
 	Addr            string
+	DatabaseURL     string
 	ShutdownTimeout time.Duration
 }
 
@@ -16,7 +18,11 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("SHUTDOWN_TIMEOUT: %w", err)
 	}
-	return Config{Addr: getenv("ADDR", ""), ShutdownTimeout: d}, nil
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		return Config{}, errors.New("DATABASE_URL is required")
+	}
+	return Config{Addr: getenv("ADDR", ""), DatabaseURL: dsn, ShutdownTimeout: d}, nil
 }
 
 func getenv(key, fallback string) string {
