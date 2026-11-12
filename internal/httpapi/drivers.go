@@ -22,13 +22,13 @@ type DriverRepo interface {
 }
 
 type createDriverRequest struct {
-	Name  string `json:"name" binding:"required"`
-	Phone string `json:"phone" binding:"required"`
+	Name  string `json:"name" binding:"required,notblank,max=100"`
+	Phone string `json:"phone" binding:"required,e164"`
 }
 
 type updateDriverRequest struct {
-	Name   string `json:"name" binding:"required"`
-	Phone  string `json:"phone" binding:"required"`
+	Name   string `json:"name" binding:"required,notblank,max=100"`
+	Phone  string `json:"phone" binding:"required,e164"`
 	Status string `json:"status" binding:"required,oneof=offline available on_trip"`
 }
 
@@ -47,8 +47,7 @@ func (h *driverHandler) register(r gin.IRouter) {
 
 func (h *driverHandler) create(c *gin.Context) {
 	var in createDriverRequest
-	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !bindJSON(c, &in) {
 		return
 	}
 	d, err := h.repo.Create(c.Request.Context(), in.Name, in.Phone)
@@ -88,8 +87,7 @@ func (h *driverHandler) update(c *gin.Context) {
 		return
 	}
 	var in updateDriverRequest
-	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if !bindJSON(c, &in) {
 		return
 	}
 	d, err := h.repo.Update(c.Request.Context(), id, in.Name, in.Phone, in.Status)
@@ -116,7 +114,7 @@ func (h *driverHandler) delete(c *gin.Context) {
 func pathID(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id < 1 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id must be a positive integer"})
+		writeError(c, http.StatusBadRequest, "invalid_id", "id must be a positive integer", nil)
 		return 0, false
 	}
 	return id, true
@@ -127,11 +125,11 @@ func pathID(c *gin.Context) (int64, bool) {
 func fail(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "driver not found"})
+		writeError(c, http.StatusNotFound, "not_found", "driver not found", nil)
 	case errors.Is(err, store.ErrConflict):
-		c.JSON(http.StatusConflict, gin.H{"error": "phone number already in use"})
+		writeError(c, http.StatusConflict, "conflict", "phone number already in use", nil)
 	default:
 		log.Printf("internal error: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		writeError(c, http.StatusInternalServerError, "internal_error", "internal error", nil)
 	}
 }

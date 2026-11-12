@@ -14,7 +14,17 @@ type Pinger interface {
 
 func NewRouter(db Pinger, drivers DriverRepo) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery(), gin.Logger())
+	r.Use(gin.CustomRecovery(func(c *gin.Context, _ any) {
+		writeError(c, http.StatusInternalServerError, "internal_error", "internal error", nil)
+	}), gin.Logger())
+
+	r.HandleMethodNotAllowed = true
+	r.NoRoute(func(c *gin.Context) {
+		writeError(c, http.StatusNotFound, "route_not_found", "no such route", nil)
+	})
+	r.NoMethod(func(c *gin.Context) {
+		writeError(c, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", nil)
+	})
 
 	r.GET("/healthz", func(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
