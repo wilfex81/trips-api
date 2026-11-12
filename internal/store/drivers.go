@@ -37,6 +37,7 @@ const driverCols = "id, name, phone, status, created_at, updated_at"
 func scanDriver(row pgx.Row) (Driver, error) {
 	var d Driver
 	err := row.Scan(&d.ID, &d.Name, &d.Phone, &d.Status, &d.CreatedAt, &d.UpdatedAt)
+	d.CreatedAt, d.UpdatedAt = d.CreatedAt.UTC(), d.UpdatedAt.UTC()
 	return d, err
 }
 
