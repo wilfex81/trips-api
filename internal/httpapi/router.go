@@ -25,6 +25,11 @@ func NewRouter(db Pinger, drivers DriverRepo) *gin.Engine {
 	r.NoMethod(func(c *gin.Context) {
 		writeError(c, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", nil)
 	})
+
+	r.GET("/healthz", func(ctx *gin.Context) {
+		ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
 	// We can reach the DB
 	r.GET("/readyz", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)

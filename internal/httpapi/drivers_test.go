@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -23,6 +24,14 @@ type fakeRepo struct {
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{next: 1, data: map[int64]store.Driver{}}
+}
+
+type errBody struct {
+	Error struct {
+		Code    string            `json:"code"`
+		Message string            `json:"message"`
+		Fields  map[string]string `json:"fields"`
+	} `json:"error"`
 }
 
 func (f *fakeRepo) phoneTaken(phone string, except int64) bool {
@@ -120,7 +129,7 @@ func TestCreateDriver(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, rec.Code)
 
 	// missing phone, and not JSON at all
-	assert.Equal(t, http.StatusBadRequest, do(h, "POST", "/drivers", `{"name":"Bob"}`).Code)
+	assert.Equal(t, http.StatusUnprocessableEntity, do(h, "POST", "/drivers", `{"name":"Bob"}`).Code)
 	assert.Equal(t, http.StatusBadRequest, do(h, "POST", "/drivers", `not json`).Code)
 }
 
@@ -146,7 +155,7 @@ func TestUpdateDriver(t *testing.T) {
 
 	// status outside the allowed list
 	rec = do(h, "PUT", "/drivers/1", `{"name":"Ann","phone":"+254700000001","status":"flying"}`)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
 	assert.Equal(t, http.StatusNotFound,
 		do(h, "PUT", "/drivers/99", `{"name":"X","phone":"1","status":"offline"}`).Code)
@@ -175,4 +184,68 @@ func TestDeleteDriver(t *testing.T) {
 	assert.Empty(t, rec.Body.String())
 
 	assert.Equal(t, http.StatusNotFound, do(h, "DELETE", "/drivers/1", "").Code)
+}
+
+func TestValidationErrors(t *testing.T) {
+	h := newTestRouter()
+	long := strings.Repeat("a", 101)
+
+	tests := []struct {
+		name   string
+		body   string
+		status int
+		code   string
+		field  string // a field expected in "fields", empty if none
+	}{
+		{"missing phone", `{"name":"Ann"}`, 422, "validation_failed", "phone"},
+		{"blank name", `{"name":"   ","phone":"+254700000001"}`, 422, "validation_failed", "name"},
+		{"bad phone", `{"name":"Ann","phone":"0700000001"}`, 422, "validation_failed", "phone"},
+		{"name too long", `{"name":"` + long + `","phone":"+254700000001"}`, 422, "validation_failed", "name"},
+		{"unknown field", `{"name":"Ann","phone":"+254700000001","admin":true}`, 400, "invalid_json", ""},
+		{"not json", `nope`, 400, "invalid_json", ""},
+		{"empty body", ``, 400, "invalid_json", ""},
+		{"wrong type", `{"name":5,"phone":"+254700000001"}`, 400, "invalid_json", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(h, "POST", "/drivers", tc.body)
+			assert.Equal(t, tc.status, rec.Code)
+			e := decode[errBody](t, rec)
+			assert.Equal(t, tc.code, e.Error.Code)
+			assert.NotEmpty(t, e.Error.Message)
+			if tc.field != "" {
+				assert.Contains(t, e.Error.Fields, tc.field)
+			}
+		})
+	}
+}
+
+func TestRequestTooLarge(t *testing.T) {
+	h := newTestRouter()
+	big := `{"name":"` + strings.Repeat("a", 2<<20) + `","phone":"+254700000001"}`
+	rec := do(h, "POST", "/drivers", big)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	assert.Equal(t, "request_too_large", decode[errBody](t, rec).Error.Code)
+}
+
+func TestUnknownRouteAndMethod(t *testing.T) {
+	h := newTestRouter()
+
+	rec := do(h, "GET", "/nope", "")
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, "route_not_found", decode[errBody](t, rec).Error.Code)
+
+	rec = do(h, "PATCH", "/drivers/1", "")
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+	assert.Equal(t, "method_not_allowed", decode[errBody](t, rec).Error.Code)
+}
+
+func TestPanicBecomesJSON500(t *testing.T) {
+	r := NewRouter(fakeDB{}, newFakeRepo())
+	r.GET("/boom", func(c *gin.Context) { panic("secret internals") })
+
+	rec := do(r, "GET", "/boom", "")
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, "internal_error", decode[errBody](t, rec).Error.Code)
+	assert.NotContains(t, rec.Body.String(), "secret internals") // internals never reach the client
 }
