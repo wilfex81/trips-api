@@ -107,7 +107,7 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 }
 
 func newTestRouter() http.Handler {
-	return NewRouter(fakeDB{}, newFakeRepo())
+	return NewRouter(Deps{DB: fakeDB{}, Drivers: newFakeRepo()})
 }
 
 func TestCreateDriver(t *testing.T) {
@@ -237,7 +237,7 @@ func TestUnknownRouteAndMethod(t *testing.T) {
 }
 
 func TestPanicBecomesJSON500(t *testing.T) {
-	r := NewRouter(fakeDB{}, newFakeRepo())
+	r := NewRouter(Deps{DB: fakeDB{}, Drivers: newFakeRepo()})
 	r.GET("/boom", func(c *gin.Context) { panic("secret internals") })
 
 	rec := do(r, "GET", "/boom", "")

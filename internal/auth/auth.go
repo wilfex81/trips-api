@@ -21,9 +21,11 @@ type Service struct {
 	now       func() time.Time
 }
 
+// NewService needs a secret of at least 32 bytes. bcrypt cost is a parameter
+// so tests can use the cheapest value and stay fast.
 func NewService(secret string, ttl time.Duration, cost int) (*Service, error) {
 	if len(secret) < 32 {
-		return nil, errors.New("secret must be atleast 32 bytes")
+		return nil, errors.New("secret must be at least 32 bytes")
 	}
 	if ttl <= 0 {
 		return nil, errors.New("token ttl must be positive")
@@ -42,16 +44,17 @@ func (s *Service) HashPassword(pw string) (string, error) {
 	return string(h), err
 }
 
-func CheckPassword(hash, pw string) bool {
+func (s *Service) CheckPassword(hash, pw string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
 }
 
-// login calls this for unknown emails so response does not reveal which emails have accounts
+// BurnTime spends the same time as a real password check. Login calls it for
+// unknown emails, so response time does not reveal which emails have accounts.
 func (s *Service) BurnTime(pw string) {
 	_ = bcrypt.CompareHashAndPassword(s.dummyHash, []byte(pw))
 }
 
-// creates a signed token for a user and returns when it expires
+// Issue creates a signed token for a user and returns when it expires.
 func (s *Service) Issue(userID int64) (string, time.Time, error) {
 	now := s.now()
 	exp := now.Add(s.ttl)

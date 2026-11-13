@@ -31,7 +31,7 @@ func TestProbes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
-			NewRouter(fakeDB{tc.dbErr}, nil).ServeHTTP(rec, req)
+			NewRouter(Deps{DB: fakeDB{tc.dbErr}}).ServeHTTP(rec, req)
 
 			assert.Equal(t, tc.status, rec.Code)
 			assert.JSONEq(t, tc.body, rec.Body.String())
