@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -346,4 +347,16 @@ func TestListQueryErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCustomValidatorsRegistered(t *testing.T) {
+	registerValidators()
+
+	type probe struct {
+		A string `binding:"notblank"`
+		B string `binding:"maxbytes=3"`
+	}
+	assert.NoError(t, binding.Validator.ValidateStruct(&probe{A: "x", B: "abc"}))
+	assert.Error(t, binding.Validator.ValidateStruct(&probe{A: "   ", B: "abc"}))
+	assert.Error(t, binding.Validator.ValidateStruct(&probe{A: "x", B: "abcd"}))
 }

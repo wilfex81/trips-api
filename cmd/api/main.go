@@ -28,7 +28,7 @@ func run() error {
 	_ = godotenv.Load()
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -69,7 +69,7 @@ func run() error {
 
 	log.Printf("listening on %s", cfg.Addr)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+		return err
 	}
 	log.Println("shutdown complete")
 	return nil

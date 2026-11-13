@@ -21,6 +21,7 @@ type Deps struct {
 }
 
 func NewRouter(d Deps) *gin.Engine {
+	registerValidators()
 	r := gin.New()
 	r.Use(gin.CustomRecovery(func(c *gin.Context, _ any) {
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal error", nil)
