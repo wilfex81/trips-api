@@ -16,7 +16,7 @@ import (
 type DriverRepo interface {
 	Create(ctx context.Context, name, phone string) (store.Driver, error)
 	Get(ctx context.Context, id int64) (store.Driver, error)
-	List(ctx context.Context) ([]store.Driver, error)
+	List(ctx context.Context, p store.ListParams) ([]store.Driver, error)
 	Update(ctx context.Context, id int64, name, phone, status string) (store.Driver, error)
 	Delete(ctx context.Context, id int64) error
 }
@@ -34,6 +34,11 @@ type updateDriverRequest struct {
 
 type driverHandler struct {
 	repo DriverRepo
+}
+
+type driverPage struct {
+	Data       []store.Driver `json:"data"`
+	NextCursor *string        `json:"next_cursor"`
 }
 
 func (h *driverHandler) register(r gin.IRouter) {
@@ -60,12 +65,29 @@ func (h *driverHandler) create(c *gin.Context) {
 }
 
 func (h *driverHandler) list(c *gin.Context) {
-	ds, err := h.repo.List(c.Request.Context())
+	p, ok := parseListParams(c)
+	if !ok {
+		return
+	}
+
+	// ask for onr extra row, so we know whether another page exists
+	ds, err := h.repo.List(c.Request.Context(), store.ListParams{
+		AfterID: p.afterID,
+		Status:  p.status,
+		Limit:   p.limit + 1,
+	})
 	if err != nil {
 		fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, ds)
+
+	var next *string
+	if len(ds) > p.limit {
+		ds = ds[:p.limit]
+		cur := encodeCursor(ds[len(ds)-1].ID)
+		next = &cur
+	}
+	c.JSON(http.StatusOK, driverPage{Data: ds, NextCursor: next})
 }
 
 func (h *driverHandler) get(c *gin.Context) {
