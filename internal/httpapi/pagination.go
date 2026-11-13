@@ -50,7 +50,7 @@ func parseListParams(c *gin.Context) (listParams, bool) {
 	if s := c.Query("cursor"); s != "" {
 		id, err := decodeCursor(s)
 		if err != nil {
-			writeError(c, http.StatusBadRequest, "invalid cursor", "cursor is not valid", nil)
+			writeError(c, http.StatusBadRequest, "invalid_cursor", "cursor is not valid", nil)
 			return p, false
 		}
 		p.afterID = id
