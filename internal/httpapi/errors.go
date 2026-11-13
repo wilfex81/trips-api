@@ -4,7 +4,9 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
@@ -24,11 +26,20 @@ func writeError(c *gin.Context, status int, code, message string, fields map[str
 	c.AbortWithStatusJSON(status, gin.H{"error": apiError{Code: code, Message: message, Fields: fields}})
 }
 
-func init() {
-	// reject JSON with fields we do not know, so a typo like "phon" does not pass silently
-	binding.EnableDecoderDisallowUnknownFields = true
+var registerOnce sync.Once
 
-	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
+// registerValidators adds our custom rules to Gin's validator. NewRouter calls
+// it once, and it panics if anything is wrong, so a broken setup shows up when
+// the server boots and not on the first request.
+func registerValidators() {
+	registerOnce.Do(func() {
+		binding.EnableDecoderDisallowUnknownFields = true
+
+		v, ok := binding.Validator.Engine().(*validator.Validate)
+		if !ok {
+			panic("httpapi: gin's validator is not a *validator.Validate")
+		}
+
 		// report errors under the JSON name ("phone"), not the Go name ("Phone")
 		v.RegisterTagNameFunc(func(f reflect.StructField) string {
 			name := strings.SplitN(f.Tag.Get("json"), ",", 2)[0]
@@ -37,10 +48,23 @@ func init() {
 			}
 			return name
 		})
+
 		// a string made only of spaces is not a name
-		_ = v.RegisterValidation("notblank", func(fl validator.FieldLevel) bool {
+		mustRegister(v, "notblank", func(fl validator.FieldLevel) bool {
 			return strings.TrimSpace(fl.Field().String()) != ""
 		})
+
+		// bcrypt only uses the first 72 bytes, so longer passwords are refused
+		mustRegister(v, "maxbytes", func(fl validator.FieldLevel) bool {
+			n, err := strconv.Atoi(fl.Param())
+			return err == nil && len(fl.Field().String()) <= n
+		})
+	})
+}
+
+func mustRegister(v *validator.Validate, tag string, fn validator.Func) {
+	if err := v.RegisterValidation(tag, fn); err != nil {
+		panic("httpapi: cannot register validator " + tag + ": " + err.Error())
 	}
 }
 
@@ -76,6 +100,12 @@ func fieldMessage(fe validator.FieldError) string {
 		return "is required"
 	case "max":
 		return "must be at most " + fe.Param() + " characters"
+	case "min":
+		return "must be at least " + fe.Param() + " characters"
+	case "maxbytes":
+		return "must be at most " + fe.Param() + " bytes"
+	case "email":
+		return "must be a valid email address"
 	case "e164":
 		return "must be in international format, like +254700000001"
 	case "oneof":

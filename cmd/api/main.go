@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/wilfex81/trips-api/internal/auth"
 	"github.com/wilfex81/trips-api/internal/config"
 	"github.com/wilfex81/trips-api/internal/httpapi"
 	"github.com/wilfex81/trips-api/internal/store"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
@@ -26,7 +28,7 @@ func run() error {
 	_ = godotenv.Load()
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -42,10 +44,19 @@ func run() error {
 	if err := store.Migrate(cfg.DatabaseURL); err != nil {
 		return err
 	}
+	tokens, err := auth.NewService(cfg.JWTSecret, cfg.TokenTTL, bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
 
 	srv := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           httpapi.NewRouter(pool, store.NewDriverStore(pool)),
+		Addr: cfg.Addr,
+		Handler: httpapi.NewRouter(httpapi.Deps{
+			DB:      pool,
+			Drivers: store.NewDriverStore(pool),
+			Users:   store.NewUserStore(pool),
+			Auth:    tokens,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -58,7 +69,7 @@ func run() error {
 
 	log.Printf("listening on %s", cfg.Addr)
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+		return err
 	}
 	log.Println("shutdown complete")
 	return nil

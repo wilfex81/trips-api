@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -107,7 +108,7 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 }
 
 func newTestRouter() http.Handler {
-	return NewRouter(fakeDB{}, newFakeRepo())
+	return NewRouter(Deps{DB: fakeDB{}, Drivers: newFakeRepo()})
 }
 
 func TestCreateDriver(t *testing.T) {
@@ -237,7 +238,7 @@ func TestUnknownRouteAndMethod(t *testing.T) {
 }
 
 func TestPanicBecomesJSON500(t *testing.T) {
-	r := NewRouter(fakeDB{}, newFakeRepo())
+	r := NewRouter(Deps{DB: fakeDB{}, Drivers: newFakeRepo()})
 	r.GET("/boom", func(c *gin.Context) { panic("secret internals") })
 
 	rec := do(r, "GET", "/boom", "")
@@ -346,4 +347,16 @@ func TestListQueryErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCustomValidatorsRegistered(t *testing.T) {
+	registerValidators()
+
+	type probe struct {
+		A string `binding:"notblank"`
+		B string `binding:"maxbytes=3"`
+	}
+	assert.NoError(t, binding.Validator.ValidateStruct(&probe{A: "x", B: "abc"}))
+	assert.Error(t, binding.Validator.ValidateStruct(&probe{A: "   ", B: "abc"}))
+	assert.Error(t, binding.Validator.ValidateStruct(&probe{A: "x", B: "abcd"}))
 }
