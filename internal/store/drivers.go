@@ -28,6 +28,12 @@ type DriverStore struct {
 	db *pgxpool.Pool
 }
 
+type ListParams struct {
+	AfterID int64
+	Status  string
+	Limit   int
+}
+
 func NewDriverStore(db *pgxpool.Pool) *DriverStore {
 	return &DriverStore{db: db}
 }
@@ -65,9 +71,13 @@ func (s *DriverStore) Get(ctx context.Context, id int64) (Driver, error) {
 	return d, mapErr(err)
 }
 
-func (s *DriverStore) List(ctx context.Context) ([]Driver, error) {
+func (s *DriverStore) List(ctx context.Context, p ListParams) ([]Driver, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT `+driverCols+` FROM drivers ORDER BY id LIMIT 100`)
+		`SELECT `+driverCols+` FROM drivers
+		  WHERE id > $1 AND ($2::text = '' OR status = $2)
+		  ORDER BY id
+		  LIMIT $3`,
+		p.AfterID, p.Status, p.Limit)
 	if err != nil {
 		return nil, err
 	}

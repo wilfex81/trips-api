@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +25,11 @@ type fakeRepo struct {
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{next: 1, data: map[int64]store.Driver{}}
+}
+
+type pageBody struct {
+	Data       []store.Driver `json:"data"`
+	NextCursor *string        `json:"next_cursor"`
 }
 
 type errBody struct {
@@ -60,16 +66,6 @@ func (f *fakeRepo) Get(_ context.Context, id int64) (store.Driver, error) {
 		return store.Driver{}, store.ErrNotFound
 	}
 	return d, nil
-}
-
-func (f *fakeRepo) List(context.Context) ([]store.Driver, error) {
-	out := make([]store.Driver, 0)
-	for id := int64(1); id < f.next; id++ {
-		if d, ok := f.data[id]; ok {
-			out = append(out, d)
-		}
-	}
-	return out, nil
 }
 
 func (f *fakeRepo) Update(_ context.Context, id int64, name, phone, status string) (store.Driver, error) {
@@ -156,23 +152,23 @@ func TestUpdateDriver(t *testing.T) {
 	// status outside the allowed list
 	rec = do(h, "PUT", "/drivers/1", `{"name":"Ann","phone":"+254700000001","status":"flying"}`)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-
 	assert.Equal(t, http.StatusNotFound,
-		do(h, "PUT", "/drivers/99", `{"name":"X","phone":"1","status":"offline"}`).Code)
+		do(h, "PUT", "/drivers/99", `{"name":"X","phone":"+254700000009","status":"offline"}`).Code)
 }
 
-func TestListDrivers(t *testing.T) {
-	h := newTestRouter()
-
-	// an empty list must be [] and never null
-	rec := do(h, "GET", "/drivers", "")
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.JSONEq(t, `[]`, rec.Body.String())
-
-	do(h, "POST", "/drivers", `{"name":"Ann","phone":"+254700000001"}`)
-	do(h, "POST", "/drivers", `{"name":"Bob","phone":"+254700000002"}`)
-	ds := decode[[]store.Driver](t, do(h, "GET", "/drivers", ""))
-	assert.Len(t, ds, 2)
+func (f *fakeRepo) List(_ context.Context, p store.ListParams) ([]store.Driver, error) {
+	out := make([]store.Driver, 0)
+	for id := p.AfterID + 1; id < f.next && len(out) < p.Limit; id++ {
+		d, ok := f.data[id]
+		if !ok {
+			continue
+		}
+		if p.Status != "" && d.Status != p.Status {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 func TestDeleteDriver(t *testing.T) {
@@ -248,4 +244,106 @@ func TestPanicBecomesJSON500(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
 	assert.Equal(t, "internal_error", decode[errBody](t, rec).Error.Code)
 	assert.NotContains(t, rec.Body.String(), "secret internals") // internals never reach the client
+}
+
+func seed(h http.Handler, n int) {
+	for i := 1; i <= n; i++ {
+		do(h, "POST", "/drivers", fmt.Sprintf(`{"name":"D%d","phone":"+2547000000%02d"}`, i, i))
+	}
+}
+
+func getPage(t *testing.T, h http.Handler, query string) pageBody {
+	t.Helper()
+	rec := do(h, "GET", "/drivers"+query, "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	return decode[pageBody](t, rec)
+}
+
+func ids(ds []store.Driver) []int64 {
+	out := make([]int64, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, d.ID)
+	}
+	return out
+}
+
+func TestListEmpty(t *testing.T) {
+	rec := do(newTestRouter(), "GET", "/drivers", "")
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, `{"data":[],"next_cursor":null}`, rec.Body.String())
+}
+
+func TestListPagination(t *testing.T) {
+	h := newTestRouter()
+	seed(h, 5)
+
+	p1 := getPage(t, h, "?limit=2")
+	assert.Equal(t, []int64{1, 2}, ids(p1.Data))
+	require.NotNil(t, p1.NextCursor)
+
+	p2 := getPage(t, h, "?limit=2&cursor="+*p1.NextCursor)
+	assert.Equal(t, []int64{3, 4}, ids(p2.Data))
+	require.NotNil(t, p2.NextCursor)
+
+	p3 := getPage(t, h, "?limit=2&cursor="+*p2.NextCursor)
+	assert.Equal(t, []int64{5}, ids(p3.Data))
+	assert.Nil(t, p3.NextCursor)
+}
+
+// 4 rows with a page size of 2: the last page is exactly full
+func TestListLastPageExactlyFull(t *testing.T) {
+	h := newTestRouter()
+	seed(h, 4)
+
+	p1 := getPage(t, h, "?limit=2")
+	require.NotNil(t, p1.NextCursor)
+	p2 := getPage(t, h, "?limit=2&cursor="+*p1.NextCursor)
+	assert.Equal(t, []int64{3, 4}, ids(p2.Data))
+	assert.Nil(t, p2.NextCursor) // no phantom empty page after this one
+}
+
+func TestListFilterByStatusWithPaging(t *testing.T) {
+	h := newTestRouter()
+	seed(h, 6)
+	for _, id := range []int{2, 4, 6} {
+		rec := do(h, "PUT", fmt.Sprintf("/drivers/%d", id),
+			fmt.Sprintf(`{"name":"D%d","phone":"+2547000000%02d","status":"available"}`, id, id))
+		require.Equal(t, http.StatusOK, rec.Code)
+	}
+
+	p1 := getPage(t, h, "?status=available&limit=2")
+	assert.Equal(t, []int64{2, 4}, ids(p1.Data))
+	require.NotNil(t, p1.NextCursor)
+
+	p2 := getPage(t, h, "?status=available&limit=2&cursor="+*p1.NextCursor)
+	assert.Equal(t, []int64{6}, ids(p2.Data))
+	assert.Nil(t, p2.NextCursor)
+}
+
+func TestListQueryErrors(t *testing.T) {
+	h := newTestRouter()
+	tests := []struct {
+		query  string
+		status int
+		code   string
+		field  string
+	}{
+		{"?limit=0", 422, "validation_failed", "limit"},
+		{"?limit=101", 422, "validation_failed", "limit"},
+		{"?limit=abc", 422, "validation_failed", "limit"},
+		{"?status=flying", 422, "validation_failed", "status"},
+		{"?cursor=!!!", 400, "invalid_cursor", ""},
+		{"?cursor=YWJj", 400, "invalid_cursor", ""}, // valid base64, but not a number
+	}
+	for _, tc := range tests {
+		t.Run(tc.query, func(t *testing.T) {
+			rec := do(h, "GET", "/drivers"+tc.query, "")
+			assert.Equal(t, tc.status, rec.Code)
+			e := decode[errBody](t, rec)
+			assert.Equal(t, tc.code, e.Error.Code)
+			if tc.field != "" {
+				assert.Contains(t, e.Error.Fields, tc.field)
+			}
+		})
+	}
 }
