@@ -1,0 +1,1 @@
+DROP INDEX drivers_status_id_idx;
