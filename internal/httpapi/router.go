@@ -6,13 +6,21 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/wilfex81/trips-api/internal/auth"
 )
 
 type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-func NewRouter(db Pinger, drivers DriverRepo) *gin.Engine {
+type Deps struct {
+	DB      Pinger
+	Drivers DriverRepo
+	Users   UserRepo
+	Auth    *auth.Service
+}
+
+func NewRouter(d Deps) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.CustomRecovery(func(c *gin.Context, _ any) {
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal error", nil)
@@ -34,14 +42,15 @@ func NewRouter(db Pinger, drivers DriverRepo) *gin.Engine {
 	r.GET("/readyz", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 		defer cancel()
-		if err := db.Ping(ctx); err != nil {
+		if err := d.DB.Ping(ctx); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "database unavailable"})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 
 	})
-	(&driverHandler{repo: drivers}).register(r)
+	(&authHandler{users: d.Users, tokens: d.Auth}).mount(r)
+	(&driverHandler{repo: d.Drivers}).register(r)
 	return r
 
 }
