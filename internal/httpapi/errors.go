@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -38,8 +39,9 @@ func init() {
 			return name
 		})
 		// a string made only of spaces is not a name
-		_ = v.RegisterValidation("notblank", func(fl validator.FieldLevel) bool {
-			return strings.TrimSpace(fl.Field().String()) != ""
+		_ = v.RegisterValidation("maxbytes", func(fl validator.FieldLevel) bool {
+			n, err := strconv.Atoi(fl.Param())
+			return err == nil && len(fl.Field().String()) <= n
 		})
 	}
 }
@@ -76,6 +78,12 @@ func fieldMessage(fe validator.FieldError) string {
 		return "is required"
 	case "max":
 		return "must be at most " + fe.Param() + " characters"
+	case "min":
+		return "must be at least " + fe.Param() + " characters"
+	case "maxbytes":
+		return "must be at most " + fe.Param() + " bytes"
+	case "email":
+		return "must be a valid email address"
 	case "e164":
 		return "must be in international format, like +254700000001"
 	case "oneof":
