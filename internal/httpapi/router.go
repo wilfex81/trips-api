@@ -51,7 +51,7 @@ func NewRouter(d Deps) *gin.Engine {
 
 	})
 	(&authHandler{users: d.Users, tokens: d.Auth}).mount(r)
-	(&driverHandler{repo: d.Drivers}).register(r)
+	(&driverHandler{repo: d.Drivers, tokens: d.Auth}).register(r)
 	return r
 
 }
