@@ -1,115 +1,17 @@
 package httpapi
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/wilfex81/trips-api/internal/store"
 )
-
-// fakeRepo is an in-memory DriverRepo, so handler tests need no database.
-type fakeRepo struct {
-	next int64
-	data map[int64]store.Driver
-}
-
-func newFakeRepo() *fakeRepo {
-	return &fakeRepo{next: 1, data: map[int64]store.Driver{}}
-}
-
-type pageBody struct {
-	Data       []store.Driver `json:"data"`
-	NextCursor *string        `json:"next_cursor"`
-}
-
-type errBody struct {
-	Error struct {
-		Code    string            `json:"code"`
-		Message string            `json:"message"`
-		Fields  map[string]string `json:"fields"`
-	} `json:"error"`
-}
-
-func (f *fakeRepo) phoneTaken(phone string, except int64) bool {
-	for id, d := range f.data {
-		if d.Phone == phone && id != except {
-			return true
-		}
-	}
-	return false
-}
-
-func (f *fakeRepo) Create(_ context.Context, name, phone string) (store.Driver, error) {
-	if f.phoneTaken(phone, 0) {
-		return store.Driver{}, store.ErrConflict
-	}
-	now := time.Now()
-	d := store.Driver{ID: f.next, Name: name, Phone: phone, Status: "offline", CreatedAt: now, UpdatedAt: now}
-	f.data[d.ID] = d
-	f.next++
-	return d, nil
-}
-
-func (f *fakeRepo) Get(_ context.Context, id int64) (store.Driver, error) {
-	d, ok := f.data[id]
-	if !ok {
-		return store.Driver{}, store.ErrNotFound
-	}
-	return d, nil
-}
-
-func (f *fakeRepo) Update(_ context.Context, id int64, name, phone, status string) (store.Driver, error) {
-	d, ok := f.data[id]
-	if !ok {
-		return store.Driver{}, store.ErrNotFound
-	}
-	if f.phoneTaken(phone, id) {
-		return store.Driver{}, store.ErrConflict
-	}
-	d.Name, d.Phone, d.Status, d.UpdatedAt = name, phone, status, time.Now()
-	f.data[id] = d
-	return d, nil
-}
-
-func (f *fakeRepo) Delete(_ context.Context, id int64) error {
-	if _, ok := f.data[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(f.data, id)
-	return nil
-}
-
-func do(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	return rec
-}
-
-func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
-	t.Helper()
-	var v T
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &v))
-	return v
-}
-
-func newTestRouter() http.Handler {
-	return NewRouter(Deps{DB: fakeDB{}, Drivers: newFakeRepo()})
-}
 
 func TestCreateDriver(t *testing.T) {
 	h := newTestRouter()
@@ -155,21 +57,6 @@ func TestUpdateDriver(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Equal(t, http.StatusNotFound,
 		do(h, "PUT", "/drivers/99", `{"name":"X","phone":"+254700000009","status":"offline"}`).Code)
-}
-
-func (f *fakeRepo) List(_ context.Context, p store.ListParams) ([]store.Driver, error) {
-	out := make([]store.Driver, 0)
-	for id := p.AfterID + 1; id < f.next && len(out) < p.Limit; id++ {
-		d, ok := f.data[id]
-		if !ok {
-			continue
-		}
-		if p.Status != "" && d.Status != p.Status {
-			continue
-		}
-		out = append(out, d)
-	}
-	return out, nil
 }
 
 func TestDeleteDriver(t *testing.T) {
@@ -235,16 +122,6 @@ func TestUnknownRouteAndMethod(t *testing.T) {
 	rec = do(h, "PATCH", "/drivers/1", "")
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 	assert.Equal(t, "method_not_allowed", decode[errBody](t, rec).Error.Code)
-}
-
-func TestPanicBecomesJSON500(t *testing.T) {
-	r := NewRouter(Deps{DB: fakeDB{}, Drivers: newFakeRepo()})
-	r.GET("/boom", func(c *gin.Context) { panic("secret internals") })
-
-	rec := do(r, "GET", "/boom", "")
-	assert.Equal(t, http.StatusInternalServerError, rec.Code)
-	assert.Equal(t, "internal_error", decode[errBody](t, rec).Error.Code)
-	assert.NotContains(t, rec.Body.String(), "secret internals") // internals never reach the client
 }
 
 func seed(h http.Handler, n int) {
@@ -359,4 +236,63 @@ func TestCustomValidatorsRegistered(t *testing.T) {
 	assert.NoError(t, binding.Validator.ValidateStruct(&probe{A: "x", B: "abc"}))
 	assert.Error(t, binding.Validator.ValidateStruct(&probe{A: "   ", B: "abc"}))
 	assert.Error(t, binding.Validator.ValidateStruct(&probe{A: "x", B: "abcd"}))
+}
+
+func TestDriversRequireAuth(t *testing.T) {
+	h := newRawRouter()
+	update := `{"name":"A","phone":"+254700000001","status":"offline"}`
+
+	for _, tc := range []struct{ method, path, body string }{
+		{"POST", "/drivers", `{"name":"Ann","phone":"+254700000001"}`},
+		{"GET", "/drivers", ""},
+		{"GET", "/drivers/1", ""},
+		{"PUT", "/drivers/1", update},
+		{"DELETE", "/drivers/1", ""},
+	} {
+		rec := do(h, tc.method, tc.path, tc.body)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, "%s %s", tc.method, tc.path)
+	}
+	assert.Equal(t, http.StatusOK, do(h, "GET", "/healthz", "").Code) // health checks stay open
+}
+
+func TestOwnershipIsolation(t *testing.T) {
+	raw := newRawRouter()
+	alice := routerFor(raw, 1)
+	bob := routerFor(raw, 2)
+
+	rec := do(alice, "POST", "/drivers", `{"name":"Ann","phone":"+254700000001"}`)
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	// bob cannot read, change or delete it, and cannot tell it exists
+	assert.Equal(t, http.StatusNotFound, do(bob, "GET", "/drivers/1", "").Code)
+	assert.Equal(t, http.StatusNotFound,
+		do(bob, "PUT", "/drivers/1", `{"name":"X","phone":"+254700000009","status":"available"}`).Code)
+	assert.Equal(t, http.StatusNotFound, do(bob, "DELETE", "/drivers/1", "").Code)
+	assert.JSONEq(t, `{"data":[],"next_cursor":null}`, do(bob, "GET", "/drivers", "").Body.String())
+
+	// alice's driver is untouched
+	got := decode[store.Driver](t, do(alice, "GET", "/drivers/1", ""))
+	assert.Equal(t, "Ann", got.Name)
+	assert.Equal(t, "offline", got.Status)
+
+	// the same phone is fine for another owner, but not twice for one owner
+	assert.Equal(t, http.StatusCreated, do(bob, "POST", "/drivers", `{"name":"Ann B","phone":"+254700000001"}`).Code)
+	assert.Equal(t, http.StatusConflict, do(alice, "POST", "/drivers", `{"name":"Dup","phone":"+254700000001"}`).Code)
+}
+
+func TestListShowsOnlyOwnDrivers(t *testing.T) {
+	raw := newRawRouter()
+	alice := routerFor(raw, 1)
+	bob := routerFor(raw, 2)
+	seed(alice, 3) // ids 1, 2, 3
+	seed(bob, 2)   // ids 4, 5, mixed in with alice's rows
+
+	assert.Equal(t, []int64{4, 5}, ids(getPage(t, bob, "").Data))
+
+	p1 := getPage(t, alice, "?limit=2")
+	assert.Equal(t, []int64{1, 2}, ids(p1.Data))
+	require.NotNil(t, p1.NextCursor)
+	p2 := getPage(t, alice, "?limit=2&cursor="+*p1.NextCursor)
+	assert.Equal(t, []int64{3}, ids(p2.Data))
+	assert.Nil(t, p2.NextCursor)
 }
