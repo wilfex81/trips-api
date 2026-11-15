@@ -13,6 +13,7 @@ import (
 var (
 	ErrNotFound = errors.New("not found")
 	ErrConflict = errors.New("conflict")
+	ErrInUse    = errors.New("in use")
 )
 
 type Driver struct {
@@ -47,8 +48,13 @@ func mapErr(err error) error {
 		return ErrNotFound
 	}
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return ErrConflict
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23505": // unique violation
+			return ErrConflict
+		case "23503": // foreign key violation: something still points at this row
+			return ErrInUse
+		}
 	}
 	return err
 }
