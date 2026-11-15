@@ -28,12 +28,6 @@ type DriverStore struct {
 	db *pgxpool.Pool
 }
 
-type ListParams struct {
-	AfterID int64
-	Status  string
-	Limit   int
-}
-
 func NewDriverStore(db *pgxpool.Pool) *DriverStore {
 	return &DriverStore{db: db}
 }
@@ -47,6 +41,7 @@ func scanDriver(row pgx.Row) (Driver, error) {
 	return d, err
 }
 
+// turns database errors into the errors the rest of the app understands
 func mapErr(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
@@ -58,26 +53,33 @@ func mapErr(err error) error {
 	return err
 }
 
-func (s *DriverStore) Create(ctx context.Context, name, phone string) (Driver, error) {
+func (s *DriverStore) Create(ctx context.Context, ownerID int64, name, phone string) (Driver, error) {
 	d, err := scanDriver(s.db.QueryRow(ctx,
-		`INSERT INTO drivers (name, phone) VALUES ($1, $2) RETURNING `+driverCols, name,
-		phone))
+		`INSERT INTO drivers (owner_id, name, phone) VALUES ($1, $2, $3) RETURNING `+driverCols,
+		ownerID, name, phone))
 	return d, mapErr(err)
 }
 
-func (s *DriverStore) Get(ctx context.Context, id int64) (Driver, error) {
+func (s *DriverStore) Get(ctx context.Context, ownerID, id int64) (Driver, error) {
 	d, err := scanDriver(s.db.QueryRow(ctx,
-		`SELECT `+driverCols+` FROM drivers WHERE id = $1`, id))
+		`SELECT `+driverCols+` FROM drivers WHERE id = $1 AND owner_id = $2`, id, ownerID))
 	return d, mapErr(err)
+}
+
+type ListParams struct {
+	OwnerID int64  // only this owner's drivers
+	AfterID int64  // return drivers with an id greater than this
+	Status  string // empty means any status
+	Limit   int    // maximum rows to return
 }
 
 func (s *DriverStore) List(ctx context.Context, p ListParams) ([]Driver, error) {
 	rows, err := s.db.Query(ctx,
 		`SELECT `+driverCols+` FROM drivers
-		  WHERE id > $1 AND ($2::text = '' OR status = $2)
+		  WHERE owner_id = $1 AND id > $2 AND ($3::text = '' OR status = $3)
 		  ORDER BY id
-		  LIMIT $3`,
-		p.AfterID, p.Status, p.Limit)
+		  LIMIT $4`,
+		p.OwnerID, p.AfterID, p.Status, p.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -94,18 +96,18 @@ func (s *DriverStore) List(ctx context.Context, p ListParams) ([]Driver, error) 
 	return out, rows.Err()
 }
 
-func (s *DriverStore) Update(ctx context.Context, id int64, name, phone, status string) (Driver, error) {
+func (s *DriverStore) Update(ctx context.Context, ownerID, id int64, name, phone, status string) (Driver, error) {
 	d, err := scanDriver(s.db.QueryRow(ctx,
 		`UPDATE drivers
-		    SET name = $2, phone = $3, status = $4, updated_at = now()
-		  WHERE id = $1
+		    SET name = $3, phone = $4, status = $5, updated_at = now()
+		  WHERE id = $1 AND owner_id = $2
 		  RETURNING `+driverCols,
-		id, name, phone, status))
+		id, ownerID, name, phone, status))
 	return d, mapErr(err)
 }
 
-func (s *DriverStore) Delete(ctx context.Context, id int64) error {
-	tag, err := s.db.Exec(ctx, `DELETE FROM drivers WHERE id = $1`, id)
+func (s *DriverStore) Delete(ctx context.Context, ownerID, id int64) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM drivers WHERE id = $1 AND owner_id = $2`, id, ownerID)
 	if err != nil {
 		return mapErr(err)
 	}
