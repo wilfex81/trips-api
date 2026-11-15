@@ -9,16 +9,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/wilfex81/trips-api/internal/auth"
 	"github.com/wilfex81/trips-api/internal/store"
 )
 
 // DriverRepo is what the handlers need from the database layer.
+// Every method says whose drivers it is working with.
 type DriverRepo interface {
-	Create(ctx context.Context, name, phone string) (store.Driver, error)
-	Get(ctx context.Context, id int64) (store.Driver, error)
+	Create(ctx context.Context, ownerID int64, name, phone string) (store.Driver, error)
+	Get(ctx context.Context, ownerID, id int64) (store.Driver, error)
 	List(ctx context.Context, p store.ListParams) ([]store.Driver, error)
-	Update(ctx context.Context, id int64, name, phone, status string) (store.Driver, error)
-	Delete(ctx context.Context, id int64) error
+	Update(ctx context.Context, ownerID, id int64, name, phone, status string) (store.Driver, error)
+	Delete(ctx context.Context, ownerID, id int64) error
 }
 
 type createDriverRequest struct {
@@ -33,16 +35,12 @@ type updateDriverRequest struct {
 }
 
 type driverHandler struct {
-	repo DriverRepo
-}
-
-type driverPage struct {
-	Data       []store.Driver `json:"data"`
-	NextCursor *string        `json:"next_cursor"`
+	repo   DriverRepo
+	tokens *auth.Service
 }
 
 func (h *driverHandler) register(r gin.IRouter) {
-	g := r.Group("/drivers")
+	g := r.Group("/drivers", requireAuth(h.tokens))
 	g.POST("", h.create)
 	g.GET("", h.list)
 	g.GET("/:id", h.get)
@@ -55,7 +53,7 @@ func (h *driverHandler) create(c *gin.Context) {
 	if !bindJSON(c, &in) {
 		return
 	}
-	d, err := h.repo.Create(c.Request.Context(), in.Name, in.Phone)
+	d, err := h.repo.Create(c.Request.Context(), currentUserID(c), in.Name, in.Phone)
 	if err != nil {
 		fail(c, err)
 		return
@@ -64,14 +62,19 @@ func (h *driverHandler) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, d)
 }
 
+type driverPage struct {
+	Data       []store.Driver `json:"data"`
+	NextCursor *string        `json:"next_cursor"`
+}
+
 func (h *driverHandler) list(c *gin.Context) {
 	p, ok := parseListParams(c)
 	if !ok {
 		return
 	}
-
-	// ask for onr extra row, so we know whether another page exists
+	// ask for one extra row, so we know whether another page exists
 	ds, err := h.repo.List(c.Request.Context(), store.ListParams{
+		OwnerID: currentUserID(c),
 		AfterID: p.afterID,
 		Status:  p.status,
 		Limit:   p.limit + 1,
@@ -95,7 +98,7 @@ func (h *driverHandler) get(c *gin.Context) {
 	if !ok {
 		return
 	}
-	d, err := h.repo.Get(c.Request.Context(), id)
+	d, err := h.repo.Get(c.Request.Context(), currentUserID(c), id)
 	if err != nil {
 		fail(c, err)
 		return
@@ -112,7 +115,7 @@ func (h *driverHandler) update(c *gin.Context) {
 	if !bindJSON(c, &in) {
 		return
 	}
-	d, err := h.repo.Update(c.Request.Context(), id, in.Name, in.Phone, in.Status)
+	d, err := h.repo.Update(c.Request.Context(), currentUserID(c), id, in.Name, in.Phone, in.Status)
 	if err != nil {
 		fail(c, err)
 		return
@@ -125,7 +128,7 @@ func (h *driverHandler) delete(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.repo.Delete(c.Request.Context(), id); err != nil {
+	if err := h.repo.Delete(c.Request.Context(), currentUserID(c), id); err != nil {
 		fail(c, err)
 		return
 	}
