@@ -14,6 +14,7 @@ import (
 
 	"github.com/wilfex81/trips-api/internal/auth"
 	"github.com/wilfex81/trips-api/internal/store"
+	"github.com/wilfex81/trips-api/internal/trips"
 )
 
 type pageBody struct {
@@ -166,8 +167,94 @@ func routerFor(next http.Handler, userID int64) http.Handler {
 
 // newRawRouter has no injected login, so requests are anonymous unless they carry a token.
 func newRawRouter() http.Handler {
-	return NewRouter(Deps{DB: fakeDB{}, Drivers: newFakeRepo(), Users: newFakeUsers(), Auth: testAuth})
+	drivers := newFakeRepo()
+	return NewRouter(Deps{
+		DB:      fakeDB{},
+		Drivers: drivers,
+		Trips:   newFakeTrips(drivers),
+		Users:   newFakeUsers(),
+		Auth:    testAuth,
+	})
 }
 
 // newTestRouter acts as user 1, which keeps the older tests unchanged.
 func newTestRouter() http.Handler { return routerFor(newRawRouter(), 1) }
+
+type fakeTrips struct {
+	next    int64
+	data    map[int64]store.Trip
+	owner   map[int64]int64
+	drivers *fakeRepo
+}
+
+func newFakeTrips(drivers *fakeRepo) *fakeTrips {
+	return &fakeTrips{next: 1, data: map[int64]store.Trip{}, owner: map[int64]int64{}, drivers: drivers}
+}
+
+func (f *fakeTrips) mine(ownerID, id int64) (store.Trip, bool) {
+	t, ok := f.data[id]
+	if !ok || f.owner[id] != ownerID {
+		return store.Trip{}, false
+	}
+	return t, true
+}
+
+func (f *fakeTrips) Create(_ context.Context, ownerID int64, pickup, dropoff string) (store.Trip, error) {
+	now := time.Now()
+	t := store.Trip{ID: f.next, Pickup: pickup, Dropoff: dropoff, Status: "requested", CreatedAt: now, UpdatedAt: now}
+	f.data[t.ID] = t
+	f.owner[t.ID] = ownerID
+	f.next++
+	return t, nil
+}
+
+func (f *fakeTrips) Get(_ context.Context, ownerID, id int64) (store.Trip, error) {
+	t, ok := f.mine(ownerID, id)
+	if !ok {
+		return store.Trip{}, store.ErrNotFound
+	}
+	return t, nil
+}
+
+func (f *fakeTrips) List(_ context.Context, p store.TripListParams) ([]store.Trip, error) {
+	out := make([]store.Trip, 0)
+	for id := p.AfterID + 1; id < f.next && len(out) < p.Limit; id++ {
+		t, ok := f.mine(p.OwnerID, id)
+		if !ok || (p.Status != "" && t.Status != p.Status) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+func (f *fakeTrips) Apply(_ context.Context, ownerID, id int64, a trips.Action, driverID int64) (store.Trip, error) {
+	t, ok := f.mine(ownerID, id)
+	if !ok {
+		return store.Trip{}, store.ErrNotFound
+	}
+	next, err := trips.Next(trips.Status(t.Status), a)
+	if err != nil {
+		return store.Trip{}, &store.TransitionError{Action: string(a), From: t.Status}
+	}
+	if a == trips.Accept {
+		d, ok := f.drivers.mine(ownerID, driverID)
+		if !ok {
+			return store.Trip{}, store.ErrDriverNotFound
+		}
+		if d.Status != "available" {
+			return store.Trip{}, store.ErrDriverUnavailable
+		}
+		t.DriverID = &driverID
+	}
+	t.Status = string(next)
+	t.UpdatedAt = time.Now()
+	f.data[id] = t
+
+	if ds, ok := trips.DriverStatus(a); ok && t.DriverID != nil {
+		d := f.drivers.data[*t.DriverID]
+		d.Status = ds
+		f.drivers.data[*t.DriverID] = d
+	}
+	return t, nil
+}
