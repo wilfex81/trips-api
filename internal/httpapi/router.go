@@ -18,6 +18,7 @@ type Deps struct {
 	Drivers DriverRepo
 	Users   UserRepo
 	Auth    *auth.Service
+	Trips   TripRepo
 }
 
 func NewRouter(d Deps) *gin.Engine {
@@ -52,6 +53,7 @@ func NewRouter(d Deps) *gin.Engine {
 	})
 	(&authHandler{users: d.Users, tokens: d.Auth}).mount(r)
 	(&driverHandler{repo: d.Drivers, tokens: d.Auth}).register(r)
+	(&tripHandler{repo: d.Trips, tokens: d.Auth}).register(r)
 	return r
 
 }
