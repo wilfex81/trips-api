@@ -30,10 +30,11 @@ type acceptTripRequest struct {
 type tripHandler struct {
 	repo   TripRepo
 	tokens *auth.Service
+	limit  gin.HandlerFunc
 }
 
 func (h *tripHandler) register(r gin.IRouter) {
-	g := r.Group("/trips", requireAuth(h.tokens))
+	g := r.Group("/trips", requireAuth(h.tokens), h.limit)
 	g.POST("", h.create)
 	g.GET("", h.list)
 	g.GET("/:id", h.get)

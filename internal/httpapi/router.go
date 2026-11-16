@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -14,16 +15,34 @@ type Pinger interface {
 }
 
 type Deps struct {
-	DB      Pinger
-	Drivers DriverRepo
-	Users   UserRepo
-	Auth    *auth.Service
-	Trips   TripRepo
+	DB             Pinger
+	Drivers        DriverRepo
+	Trips          TripRepo
+	Users          UserRepo
+	Auth           *auth.Service
+	IPLimiter      Allower // limits /auth by client address; nil turns it off
+	UserLimiter    Allower // limits the API by logged in user; nil turns it off
+	TrustedProxies []string
 }
 
 func NewRouter(d Deps) *gin.Engine {
 	registerValidators()
 	r := gin.New()
+	// Gin trusts X-Forwarded-For from anyone by default, which lets a client
+	// fake its address and dodge a per-address limit. Trust only proxies we list.
+	if err := r.SetTrustedProxies(d.TrustedProxies); err != nil {
+		panic("httpapi: bad trusted proxies: " + err.Error())
+	}
+
+	ipLimit, userLimit := noLimit, noLimit
+	if d.IPLimiter != nil {
+		ipLimit = rateLimit(d.IPLimiter, func(c *gin.Context) string { return "ip:" + c.ClientIP() })
+	}
+	if d.UserLimiter != nil {
+		userLimit = rateLimit(d.UserLimiter, func(c *gin.Context) string {
+			return "user:" + strconv.FormatInt(currentUserID(c), 10)
+		})
+	}
 	r.Use(gin.CustomRecovery(func(c *gin.Context, _ any) {
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal error", nil)
 	}), gin.Logger())
@@ -51,9 +70,9 @@ func NewRouter(d Deps) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 
 	})
-	(&authHandler{users: d.Users, tokens: d.Auth}).mount(r)
-	(&driverHandler{repo: d.Drivers, tokens: d.Auth}).register(r)
-	(&tripHandler{repo: d.Trips, tokens: d.Auth}).register(r)
+	(&authHandler{users: d.Users, tokens: d.Auth, ipLimit: ipLimit, userLimit: userLimit}).mount(r)
+	(&driverHandler{repo: d.Drivers, tokens: d.Auth, limit: userLimit}).register(r)
+	(&tripHandler{repo: d.Trips, tokens: d.Auth, limit: userLimit}).register(r)
 	return r
 
 }

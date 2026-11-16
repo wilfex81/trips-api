@@ -37,10 +37,11 @@ type updateDriverRequest struct {
 type driverHandler struct {
 	repo   DriverRepo
 	tokens *auth.Service
+	limit  gin.HandlerFunc
 }
 
 func (h *driverHandler) register(r gin.IRouter) {
-	g := r.Group("/drivers", requireAuth(h.tokens))
+	g := r.Group("/drivers", requireAuth(h.tokens), h.limit)
 	g.POST("", h.create)
 	g.GET("", h.list)
 	g.GET("/:id", h.get)
