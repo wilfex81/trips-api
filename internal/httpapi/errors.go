@@ -110,6 +110,8 @@ func fieldMessage(fe validator.FieldError) string {
 		return "must be in international format, like +254700000001"
 	case "oneof":
 		return "must be one of: " + strings.ReplaceAll(fe.Param(), " ", ", ")
+	case "gte":
+		return "must be at least " + fe.Param()
 	default:
 		return "is invalid"
 	}

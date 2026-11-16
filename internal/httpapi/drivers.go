@@ -67,8 +67,10 @@ type driverPage struct {
 	NextCursor *string        `json:"next_cursor"`
 }
 
+var driverStatuses = []string{"offline", "available", "on_trip"}
+
 func (h *driverHandler) list(c *gin.Context) {
-	p, ok := parseListParams(c)
+	p, ok := parseListParams(c, driverStatuses)
 	if !ok {
 		return
 	}
@@ -148,11 +150,21 @@ func pathID(c *gin.Context) (int64, bool) {
 // fail maps store errors to status codes. Anything unexpected is a 500
 // and its details stay in the log, never in the response.
 func fail(c *gin.Context, err error) {
+	var te *store.TransitionError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeError(c, http.StatusNotFound, "not_found", "driver not found", nil)
+		writeError(c, http.StatusNotFound, "not_found", "resource not found", nil)
 	case errors.Is(err, store.ErrConflict):
 		writeError(c, http.StatusConflict, "conflict", "phone number already in use", nil)
+	case errors.Is(err, store.ErrInUse):
+		writeError(c, http.StatusConflict, "in_use", "this record is still referenced by other records", nil)
+	case errors.As(err, &te):
+		writeError(c, http.StatusConflict, "invalid_transition", te.Error(), nil)
+	case errors.Is(err, store.ErrDriverUnavailable):
+		writeError(c, http.StatusConflict, "driver_unavailable", "driver is not available", nil)
+	case errors.Is(err, store.ErrDriverNotFound):
+		writeError(c, http.StatusUnprocessableEntity, "validation_failed", "request body failed validation",
+			map[string]string{"driver_id": "driver not found"})
 	default:
 		log.Printf("internal error: %v", err)
 		writeError(c, http.StatusInternalServerError, "internal_error", "internal error", nil)

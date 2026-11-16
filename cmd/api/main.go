@@ -56,6 +56,7 @@ func run() error {
 			Drivers: store.NewDriverStore(pool),
 			Users:   store.NewUserStore(pool),
 			Auth:    tokens,
+			Trips:   store.NewTripStore(pool),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
