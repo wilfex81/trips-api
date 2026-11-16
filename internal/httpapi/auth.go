@@ -28,16 +28,18 @@ type loginRequest struct {
 }
 
 type authHandler struct {
-	users  UserRepo
-	tokens *auth.Service
+	users     UserRepo
+	tokens    *auth.Service
+	ipLimit   gin.HandlerFunc
+	userLimit gin.HandlerFunc
 }
 
 func (h *authHandler) mount(r gin.IRouter) {
-	g := r.Group("/auth")
-	g.POST("register", h.registerUser)
+	g := r.Group("/auth", h.ipLimit)
+	g.POST("/register", h.registerUser)
 	g.POST("/login", h.login)
 
-	r.GET("/me", requireAuth(h.tokens), h.me)
+	r.GET("/me", requireAuth(h.tokens), h.userLimit, h.me)
 }
 
 func normalizeEmail(s string) string {

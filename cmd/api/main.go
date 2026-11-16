@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/wilfex81/rate-limiter/limiter"
 	"github.com/wilfex81/trips-api/internal/auth"
 	"github.com/wilfex81/trips-api/internal/config"
 	"github.com/wilfex81/trips-api/internal/httpapi"
@@ -49,14 +50,31 @@ func run() error {
 		return err
 	}
 
+	// 5 attempts at once, then one every 10 seconds, per client address
+	ipLimiter, err := newBucketStore(5, 0.1)
+	if err != nil {
+		return err
+	}
+	defer ipLimiter.Close()
+
+	// 60 requests at once, then one per second, per logged in user
+	userLimiter, err := newBucketStore(60, 1)
+	if err != nil {
+		return err
+	}
+	defer userLimiter.Close()
+
 	srv := &http.Server{
 		Addr: cfg.Addr,
 		Handler: httpapi.NewRouter(httpapi.Deps{
-			DB:      pool,
-			Drivers: store.NewDriverStore(pool),
-			Users:   store.NewUserStore(pool),
-			Auth:    tokens,
-			Trips:   store.NewTripStore(pool),
+			DB:             pool,
+			Drivers:        store.NewDriverStore(pool),
+			Users:          store.NewUserStore(pool),
+			Auth:           tokens,
+			Trips:          store.NewTripStore(pool),
+			IPLimiter:      ipLimiter,
+			UserLimiter:    userLimiter,
+			TrustedProxies: cfg.TrustedProxies,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -75,4 +93,19 @@ func run() error {
 	log.Println("shutdown complete")
 	return nil
 
+}
+
+// newBucketStore keeps one token bucket per client key.
+func newBucketStore(capacity int, ratePerSec float64) (*limiter.Store, error) {
+	// check the numbers once, so the factory below cannot fail
+	if _, err := limiter.NewTokenBucket(capacity, ratePerSec); err != nil {
+		return nil, err
+	}
+	// a client must be idle longer than a bucket needs to refill, or it could
+	// reset its own limit by going quiet, so add a minute of margin
+	idle := time.Duration(float64(capacity)/ratePerSec*float64(time.Second)) + time.Minute
+	return limiter.NewStore(func() limiter.Limiter {
+		l, _ := limiter.NewTokenBucket(capacity, ratePerSec)
+		return l
+	}, idle, time.Minute), nil
 }
