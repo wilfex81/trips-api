@@ -4,7 +4,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,7 +22,7 @@ type listParams struct {
 	status  string
 }
 
-func parseListParams(c *gin.Context) (listParams, bool) {
+func parseListParams(c *gin.Context, allowedStatus []string) (listParams, bool) {
 	p := listParams{limit: defaultLimit}
 	fields := map[string]string{}
 
@@ -34,11 +36,10 @@ func parseListParams(c *gin.Context) (listParams, bool) {
 	}
 
 	if s := c.Query("status"); s != "" {
-		switch s {
-		case "offline", "available", "on_trip":
+		if slices.Contains(allowedStatus, s) {
 			p.status = s
-		default:
-			fields["status"] = "must be one of: offline, available, on_trip"
+		} else {
+			fields["status"] = "must be one of: " + strings.Join(allowedStatus, ", ")
 		}
 	}
 
