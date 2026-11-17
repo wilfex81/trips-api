@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,6 +16,10 @@ type Config struct {
 	JWTSecret       string
 	TokenTTL        time.Duration
 	TrustedProxies  []string
+	AuthBurst       int
+	AuthRate        float64 // tokens added per second
+	APIBurst        int
+	APIRate         float64
 }
 
 func Load() (Config, error) {
@@ -40,7 +45,23 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("TOKEN_TTL: %w", err)
 	}
-	return Config{Addr: getenv("ADDR", ""), TrustedProxies: proxies, DatabaseURL: dsn, ShutdownTimeout: d, JWTSecret: secret, TokenTTL: ttl}, nil
+	authBurst, err := getInt("AUTH_RATE_BURST", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	authRate, err := getFloat("AUTH_RATE_PER_SEC", 0.1)
+	if err != nil {
+		return Config{}, err
+	}
+	apiBurst, err := getInt("API_RATE_BURST", 60)
+	if err != nil {
+		return Config{}, err
+	}
+	apiRate, err := getFloat("API_RATE_PER_SEC", 1)
+	if err != nil {
+		return Config{}, err
+	}
+	return Config{Addr: getenv("ADDR", ""), TrustedProxies: proxies, DatabaseURL: dsn, ShutdownTimeout: d, JWTSecret: secret, TokenTTL: ttl, AuthBurst: authBurst, AuthRate: authRate, APIBurst: apiBurst, APIRate: apiRate}, nil
 }
 
 func getenv(key, fallback string) string {
@@ -48,4 +69,28 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getInt(key string, fallback int) (int, error) {
+	s := os.Getenv(key)
+	if s == "" {
+		return fallback, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return n, nil
+}
+
+func getFloat(key string, fallback float64) (float64, error) {
+	s := os.Getenv(key)
+	if s == "" {
+		return fallback, nil
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return f, nil
 }

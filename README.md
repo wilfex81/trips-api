@@ -119,6 +119,13 @@ Every error has the same shape:
 | `/auth/*` | client address | 5 requests at once, then 1 every 10 seconds |
 | `/me`, `/drivers`, `/trips` | logged in user | 60 requests at once, then 1 per second |
 
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `AUTH_RATE_BURST` | `5` | Requests at once on `/auth/*`, per client address |
+| `AUTH_RATE_PER_SEC` | `0.1` | Tokens added per second on `/auth/*` |
+| `API_RATE_BURST` | `60` | Requests at once on the API, per user |
+| `API_RATE_PER_SEC` | `1` | Tokens added per second on the API, per user |
+
 Health checks are never limited. `X-Forwarded-For` is ignored unless the request comes from a proxy listed in `TRUSTED_PROXIES`, so a client cannot fake its address.
 
 ## How it works

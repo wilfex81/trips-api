@@ -51,14 +51,14 @@ func run() error {
 	}
 
 	// 5 attempts at once, then one every 10 seconds, per client address
-	ipLimiter, err := newBucketStore(5, 0.1)
+	ipLimiter, err := newBucketStore(cfg.AuthBurst, cfg.AuthRate)
 	if err != nil {
 		return err
 	}
 	defer ipLimiter.Close()
 
 	// 60 requests at once, then one per second, per logged in user
-	userLimiter, err := newBucketStore(60, 1)
+	userLimiter, err := newBucketStore(cfg.APIBurst, cfg.APIRate)
 	if err != nil {
 		return err
 	}
