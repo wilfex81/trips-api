@@ -58,6 +58,7 @@ func NewRouter(d Deps) *gin.Engine {
 	r.GET("/healthz", func(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+	mountDocs(r)
 
 	// We can reach the DB
 	r.GET("/readyz", func(c *gin.Context) {

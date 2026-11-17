@@ -1,0 +1,625 @@
+openapi: 3.0.3
+info:
+  title: trips-api
+  version: 0.1.0
+  description: |
+    A REST API for a small ride-hailing back office.
+
+    **Authentication.** Register, log in, then send the token as `Authorization: Bearer <token>`.
+    In Swagger UI, use the Authorize button and paste the token without the word Bearer.
+
+    **Errors.** Every error uses one shape, described by the Error schema. Branch on `error.code`,
+    not on the message text.
+
+    **Ownership.** Drivers and trips belong to the account that created them. An id that belongs
+    to someone else answers 404, the same as an id that does not exist.
+
+    **Rate limits.** `/auth/*` is limited per client address: 5 requests at once, then 1 every
+    10 seconds. The rest of the API is limited per user: 60 requests at once, then 1 per second.
+    A limited request gets 429 and a `Retry-After` header in seconds. Health checks are never limited.
+
+    **Size limit.** A request body over 1 MiB gets 413 with the code `request_too_large`.
+servers:
+  - url: http://localhost:8081
+tags:
+  - name: Health
+  - name: Auth
+  - name: Drivers
+  - name: Trips
+
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      summary: Liveness check
+      description: The process is alive. It does not look at the database.
+      tags: [Health]
+      responses:
+        "200":
+          description: Alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ok}
+
+  /readyz:
+    get:
+      operationId: getReady
+      summary: Readiness check
+      description: The process can reach its database.
+      tags: [Health]
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: ready}
+        "503":
+          description: The database does not answer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, example: database unavailable}
+
+  /auth/register:
+    post:
+      operationId: register
+      summary: Create an account
+      description: The email is stored in lower case and must be unique.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegisterRequest'}
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "409": {$ref: '#/components/responses/Conflict'}
+        "422": {$ref: '#/components/responses/ValidationFailed'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /auth/login:
+    post:
+      operationId: login
+      summary: Get an access token
+      description: |
+        An unknown email and a wrong password get the same answer, and take the same time,
+        so the endpoint does not reveal which emails have accounts.
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LoginRequest'}
+      responses:
+        "200":
+          description: Logged in
+          headers:
+            Cache-Control:
+              description: Always `no-store`
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Token'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401":
+          description: Wrong email or password (`invalid_credentials`)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        "422": {$ref: '#/components/responses/ValidationFailed'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /me:
+    get:
+      operationId: getMe
+      summary: The logged in account
+      tags: [Auth]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The account
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /drivers:
+    post:
+      operationId: createDriver
+      summary: Create a driver
+      description: New drivers start as `offline`. A phone number is unique per account.
+      tags: [Drivers]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDriverRequest'}
+      responses:
+        "201":
+          description: Driver created
+          headers:
+            Location:
+              description: Where the new driver lives, for example `/drivers/7`
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Driver'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "409": {$ref: '#/components/responses/Conflict'}
+        "422": {$ref: '#/components/responses/ValidationFailed'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+    get:
+      operationId: listDrivers
+      summary: List your drivers
+      description: Ordered by id. Pass `next_cursor` back as `cursor` to get the next page.
+      tags: [Drivers]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/DriverStatusFilter'}
+      responses:
+        "200":
+          description: A page of drivers
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DriverPage'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "422": {$ref: '#/components/responses/ValidationFailed'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /drivers/{id}:
+    get:
+      operationId: getDriver
+      summary: Get a driver
+      tags: [Drivers]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        "200":
+          description: The driver
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Driver'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "404": {$ref: '#/components/responses/NotFound'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+    put:
+      operationId: updateDriver
+      summary: Replace a driver
+      description: Every field is required, because this replaces the whole record.
+      tags: [Drivers]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateDriverRequest'}
+      responses:
+        "200":
+          description: The updated driver
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Driver'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "404": {$ref: '#/components/responses/NotFound'}
+        "409": {$ref: '#/components/responses/Conflict'}
+        "422": {$ref: '#/components/responses/ValidationFailed'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+    delete:
+      operationId: deleteDriver
+      summary: Delete a driver
+      description: A driver that still has trips cannot be deleted (409 `in_use`).
+      tags: [Drivers]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        "204":
+          description: Deleted
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "404": {$ref: '#/components/responses/NotFound'}
+        "409": {$ref: '#/components/responses/Conflict'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /trips:
+    post:
+      operationId: createTrip
+      summary: Create a trip
+      description: |
+        A new trip always starts as `requested` with no driver. The body cannot set a status
+        or a driver, and unknown fields are rejected.
+      tags: [Trips]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateTripRequest'}
+      responses:
+        "201":
+          description: Trip created
+          headers:
+            Location:
+              description: Where the new trip lives, for example `/trips/3`
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Trip'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "422": {$ref: '#/components/responses/ValidationFailed'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+    get:
+      operationId: listTrips
+      summary: List your trips
+      description: Ordered by id. Pass `next_cursor` back as `cursor` to get the next page.
+      tags: [Trips]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - {$ref: '#/components/parameters/Cursor'}
+        - {$ref: '#/components/parameters/TripStatusFilter'}
+      responses:
+        "200":
+          description: A page of trips
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TripPage'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "422": {$ref: '#/components/responses/ValidationFailed'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /trips/{id}:
+    get:
+      operationId: getTrip
+      summary: Get a trip
+      tags: [Trips]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        "200":
+          description: The trip
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Trip'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "404": {$ref: '#/components/responses/NotFound'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /trips/{id}/accept:
+    post:
+      operationId: acceptTrip
+      summary: Assign a driver to a requested trip
+      description: |
+        The trip moves from `requested` to `accepted`, and the driver becomes `on_trip`.
+        The driver must belong to you and be `available`.
+        A driver id that does not exist, or belongs to someone else, is a 422 on `driver_id`.
+        A driver who exists but is busy is a 409 `driver_unavailable`.
+        A trip that is not `requested` is a 409 `invalid_transition`.
+      tags: [Trips]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AcceptTripRequest'}
+      responses:
+        "200":
+          description: The accepted trip
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Trip'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "404": {$ref: '#/components/responses/NotFound'}
+        "409": {$ref: '#/components/responses/Conflict'}
+        "422": {$ref: '#/components/responses/ValidationFailed'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /trips/{id}/start:
+    post:
+      operationId: startTrip
+      summary: Start an accepted trip
+      description: Moves the trip from `accepted` to `in_progress`. No request body.
+      tags: [Trips]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        "200":
+          description: The trip in progress
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Trip'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "404": {$ref: '#/components/responses/NotFound'}
+        "409": {$ref: '#/components/responses/Conflict'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /trips/{id}/complete:
+    post:
+      operationId: completeTrip
+      summary: Complete a trip in progress
+      description: Moves the trip to `completed` and the driver back to `available`. No request body.
+      tags: [Trips]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        "200":
+          description: The completed trip
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Trip'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "404": {$ref: '#/components/responses/NotFound'}
+        "409": {$ref: '#/components/responses/Conflict'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+  /trips/{id}/cancel:
+    post:
+      operationId: cancelTrip
+      summary: Cancel a requested or accepted trip
+      description: |
+        Moves the trip to `cancelled`. If a driver was assigned, the driver becomes `available`.
+        A trip that is in progress, completed or already cancelled cannot be cancelled.
+        No request body.
+      tags: [Trips]
+      security:
+        - bearerAuth: []
+      parameters:
+        - {$ref: '#/components/parameters/Id'}
+      responses:
+        "200":
+          description: The cancelled trip
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Trip'}
+        "400": {$ref: '#/components/responses/BadRequest'}
+        "401": {$ref: '#/components/responses/Unauthorized'}
+        "404": {$ref: '#/components/responses/NotFound'}
+        "409": {$ref: '#/components/responses/Conflict'}
+        "429": {$ref: '#/components/responses/RateLimited'}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: {type: integer, format: int64, minimum: 1}
+    Limit:
+      name: limit
+      in: query
+      description: Page size
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    Cursor:
+      name: cursor
+      in: query
+      description: The `next_cursor` value from the previous page. Treat it as an opaque string.
+      schema: {type: string}
+    DriverStatusFilter:
+      name: status
+      in: query
+      schema: {type: string, enum: [offline, available, on_trip]}
+    TripStatusFilter:
+      name: status
+      in: query
+      schema: {type: string, enum: [requested, accepted, in_progress, completed, cancelled]}
+
+  responses:
+    BadRequest:
+      description: The request could not be read (`invalid_json`, `invalid_id` or `invalid_cursor`)
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unauthorized:
+      description: Missing, malformed, expired or otherwise invalid token (`unauthorized`)
+      headers:
+        WWW-Authenticate:
+          schema: {type: string}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: The record does not exist, or belongs to someone else (`not_found`)
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: |
+        The request is valid but the current state does not allow it. The code says why:
+        `email_taken`, `conflict` (phone already used), `in_use`, `invalid_transition`
+        or `driver_unavailable`.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ValidationFailed:
+      description: The body was read but breaks a rule (`validation_failed`), with a message per field
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    RateLimited:
+      description: Too many requests (`rate_limited`)
+      headers:
+        Retry-After:
+          description: Seconds to wait before trying again
+          schema: {type: integer, minimum: 1}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, example: validation_failed}
+            message: {type: string, example: request body failed validation}
+            fields:
+              type: object
+              description: One message per field, present on validation errors
+              additionalProperties: {type: string}
+              example: {phone: "must be in international format, like +254700000001"}
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: {type: string, format: email, maxLength: 254, example: ann@example.com}
+        password: {type: string, minLength: 8, maxLength: 72, description: At most 72 bytes, example: correct horse}
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: {type: string, example: ann@example.com}
+        password: {type: string, example: correct horse}
+
+    Token:
+      type: object
+      required: [access_token, token_type, expires_in]
+      properties:
+        access_token: {type: string}
+        token_type: {type: string, example: Bearer}
+        expires_in: {type: integer, description: Seconds until the token expires, example: 3600}
+
+    User:
+      type: object
+      required: [id, email, created_at]
+      properties:
+        id: {type: integer, format: int64, example: 1}
+        email: {type: string, example: ann@example.com}
+        created_at: {type: string, format: date-time}
+
+    Driver:
+      type: object
+      required: [id, name, phone, status, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64, example: 7}
+        name: {type: string, example: Kamau}
+        phone: {type: string, example: "+254700000001"}
+        status: {type: string, enum: [offline, available, on_trip]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    CreateDriverRequest:
+      type: object
+      required: [name, phone]
+      properties:
+        name: {type: string, maxLength: 100, description: Cannot be blank, example: Kamau}
+        phone: {type: string, description: International format, example: "+254700000001"}
+
+    UpdateDriverRequest:
+      type: object
+      required: [name, phone, status]
+      properties:
+        name: {type: string, maxLength: 100, description: Cannot be blank, example: Kamau}
+        phone: {type: string, description: International format, example: "+254700000001"}
+        status: {type: string, enum: [offline, available, on_trip]}
+
+    DriverPage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/Driver'}
+        next_cursor:
+          type: string
+          nullable: true
+          description: Null on the last page
+
+    Trip:
+      type: object
+      required: [id, driver_id, pickup, dropoff, status, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64, example: 3}
+        driver_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Null until a driver accepts the trip
+        pickup: {type: string, example: Westlands}
+        dropoff: {type: string, example: JKIA}
+        status: {type: string, enum: [requested, accepted, in_progress, completed, cancelled]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    CreateTripRequest:
+      type: object
+      required: [pickup, dropoff]
+      properties:
+        pickup: {type: string, maxLength: 200, description: Cannot be blank, example: Westlands}
+        dropoff: {type: string, maxLength: 200, description: Cannot be blank, example: JKIA}
+
+    AcceptTripRequest:
+      type: object
+      required: [driver_id]
+      properties:
+        driver_id: {type: integer, format: int64, minimum: 1, example: 7}
+
+    TripPage:
+      type: object
+      required: [data, next_cursor]
+      properties:
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/Trip'}
+        next_cursor:
+          type: string
+          nullable: true
+          description: Null on the last page
